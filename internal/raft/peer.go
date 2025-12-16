@@ -78,6 +78,8 @@ func Launch(config config.Config,
 }
 
 // ElectionCampaign starts a new election campaign.
+// Note: This bypasses the hasConfigChangeToApply() check, which is intentional
+// for bootstrap scenarios where config entries are committed but not yet applied.
 func (p *Peer) ElectionCampaign() error {
 	if p.raft.preVote {
 		return p.raft.preVoteCampaign()
