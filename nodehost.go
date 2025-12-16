@@ -1611,10 +1611,12 @@ func (nh *NodeHost) startShard(initialMembers map[uint64]Target,
 		nh.engine.setCCIReady(shardID)
 		nh.engine.setApplyReady(shardID)
 
-		if cfg.PreferredCandidate {
+		if cfg.PreferredCandidate && rn.new {
+			rn.raftMu.Lock()
 			if err := rn.p.ElectionCampaign(); err != nil {
-				panic(err)
+				plog.Warningf("%s preferred candidate campaign failed: %v", dn(shardID, replicaID), err)
 			}
+			rn.raftMu.Unlock()
 		}
 
 		return rn, nil
