@@ -197,6 +197,7 @@ type Config struct {
 	// from recovering to ready state before returning from StartReplica.
 	WaitReady bool
 
+	// PreferredCandidate indicates if the node should be prioritized during leader election over other candidates.
 	PreferredCandidate bool
 }
 
