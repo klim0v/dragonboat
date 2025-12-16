@@ -1611,6 +1611,12 @@ func (nh *NodeHost) startShard(initialMembers map[uint64]Target,
 		nh.engine.setCCIReady(shardID)
 		nh.engine.setApplyReady(shardID)
 
+		if cfg.PreferredCandidate {
+			if err := rn.p.ElectionCampaign(); err != nil {
+				panic(err)
+			}
+		}
+
 		return rn, nil
 	}
 

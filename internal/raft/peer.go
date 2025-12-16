@@ -77,6 +77,14 @@ func Launch(config config.Config,
 	return p
 }
 
+// ElectionCampaign starts a new election campaign.
+func (p *Peer) ElectionCampaign() error {
+	if p.raft.preVote {
+		return p.raft.preVoteCampaign()
+	}
+	return p.raft.campaign()
+}
+
 // Tick moves the logical clock forward by one tick.
 func (p *Peer) Tick() error {
 	return p.raft.Handle(pb.Message{
