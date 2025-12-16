@@ -196,6 +196,12 @@ type Config struct {
 	// WaitReady specifies whether to wait for the node to transition
 	// from recovering to ready state before returning from StartReplica.
 	WaitReady bool
+
+	// PreferredCandidate indicates if the node should be prioritized during
+	// leader election over other candidates. Only effective for new nodes
+	// during initial cluster bootstrap. The node will immediately start
+	// an election campaign instead of waiting for election timeout.
+	PreferredCandidate bool
 }
 
 // Validate validates the Config instance and return an error when any member
