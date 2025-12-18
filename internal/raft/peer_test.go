@@ -879,3 +879,138 @@ func TestRaftAPIQueryRaftLog(t *testing.T) {
 	assert.Nil(t, rawNode.raft.logQueryResult)
 	assert.Equal(t, entries, ud.LogQueryResult.Entries)
 }
+
+func TestForcedLeader_LeaderState(t *testing.T) {
+	addresses := []PeerAddress{
+		{ReplicaID: 1, Address: "1"},
+		{ReplicaID: 2, Address: "2"},
+		{ReplicaID: 3, Address: "3"},
+	}
+
+	leaderStorage := NewTestLogDB()
+	leaderCfg := newTestConfig(2, 10, 1)
+	leaderCfg.ForcedLeaderReplicaID = 2
+	leaderPeer := Launch(leaderCfg, leaderStorage, nil, addresses, true, true)
+
+	assert.Equal(t, leader, leaderPeer.raft.state)
+	assert.Equal(t, uint64(2), leaderPeer.raft.leaderID)
+	assert.Equal(t, uint64(2), leaderPeer.raft.term) // Forcing leadership bumps term to 2
+}
+
+func TestForcedLeader_FollowerState(t *testing.T) {
+	addresses := []PeerAddress{
+		{ReplicaID: 1, Address: "1"},
+		{ReplicaID: 2, Address: "2"},
+		{ReplicaID: 3, Address: "3"},
+	}
+
+	followerStorage := NewTestLogDB()
+	followerCfg := newTestConfig(1, 10, 1)
+	followerCfg.ForcedLeaderReplicaID = 2
+	followerPeer := Launch(followerCfg, followerStorage, nil, addresses, true, true)
+
+	assert.Equal(t, follower, followerPeer.raft.state)
+	assert.Equal(t, uint64(2), followerPeer.raft.leaderID)
+	assert.Equal(t, uint64(1), followerPeer.raft.term)
+	assert.Equal(t, uint64(3), followerPeer.raft.log.lastIndex())
+	assert.Equal(t, uint64(3), followerPeer.raft.log.committed)
+}
+
+func TestForcedLeader_LeaderMustBeInInitialMembers(t *testing.T) {
+	addresses := []PeerAddress{
+		{ReplicaID: 1, Address: "1"},
+		{ReplicaID: 2, Address: "2"},
+	}
+
+	storage := NewTestLogDB()
+	cfg := newTestConfig(1, 10, 1)
+	cfg.ForcedLeaderReplicaID = 3
+	assert.Panics(t, func() {
+		Launch(cfg, storage, nil, addresses, true, true)
+	})
+}
+
+func TestForcedLeader_DoesNotApplyOnRestart(t *testing.T) {
+	storage := NewTestLogDB()
+	storage.(*TestLogDB).SetState(pb.State{Term: 5, Vote: 0, Commit: 0})
+
+	cfg := newTestConfig(1, 10, 1)
+	cfg.ForcedLeaderReplicaID = 1
+	newNode := false
+	p := Launch(cfg, storage, nil, nil, true, newNode)
+
+	// Should reflect persisted state. Forced leader config wasn't applied
+	assert.Equal(t, uint64(5), p.raft.term)
+	assert.Equal(t, NoLeader, p.raft.leaderID)
+	assert.Equal(t, follower, p.raft.state)
+}
+
+func TestForcedLeader_StateReplication(t *testing.T) {
+	addresses := []PeerAddress{
+		{ReplicaID: 1, Address: "1"},
+		{ReplicaID: 2, Address: "2"},
+		{ReplicaID: 3, Address: "3"},
+	}
+
+	leaderStorage := NewTestLogDB()
+	leaderCfg := newTestConfig(2, 10, 1)
+	leaderCfg.ForcedLeaderReplicaID = 2
+	leaderPeer := Launch(leaderCfg, leaderStorage, nil, addresses, true, true)
+
+	f1Storage := NewTestLogDB()
+	f1Cfg := newTestConfig(1, 10, 1)
+	f1Cfg.ForcedLeaderReplicaID = 2
+	f1 := Launch(f1Cfg, f1Storage, nil, addresses, true, true)
+
+	f3Storage := NewTestLogDB()
+	f3Cfg := newTestConfig(3, 10, 1)
+	f3Cfg.ForcedLeaderReplicaID = 2
+	f3 := Launch(f3Cfg, f3Storage, nil, addresses, true, true)
+
+	assert.Equal(t, uint64(2), leaderPeer.raft.term)
+	assert.Equal(t, uint64(1), f1.raft.term)
+	assert.Equal(t, uint64(1), f3.raft.term)
+
+	hb := pb.Message{
+		Type:   pb.Heartbeat,
+		From:   2,
+		To:     0, // overwritten below
+		Term:   leaderPeer.raft.term,
+		Commit: leaderPeer.raft.log.committed,
+	}
+
+	hb.To = 1
+	ne(f1.Handle(hb), t)
+	hb.To = 3
+	ne(f3.Handle(hb), t)
+
+	assert.Equal(t, leaderPeer.raft.term, f1.raft.term)
+	assert.Equal(t, leaderPeer.raft.term, f3.raft.term)
+	assert.Equal(t, uint64(2), f1.raft.leaderID)
+	assert.Equal(t, uint64(2), f3.raft.leaderID)
+	assert.Equal(t, follower, f1.raft.state)
+	assert.Equal(t, follower, f3.raft.state)
+	assert.Equal(t, leaderPeer.raft.log.committed, f1.raft.log.committed)
+	assert.Equal(t, leaderPeer.raft.log.committed, f3.raft.log.committed)
+
+	leaderPeer.raft.broadcastReplicateMessage()
+	replicates := leaderPeer.raft.msgs
+	leaderPeer.raft.msgs = nil
+
+	for _, m := range replicates {
+		if m.Type != pb.Replicate {
+			continue
+		}
+		switch m.To {
+		case 1:
+			ne(f1.Handle(m), t)
+		case 3:
+			ne(f3.Handle(m), t)
+		}
+	}
+
+	assert.Equal(t, leaderPeer.raft.log.lastIndex(), f1.raft.log.lastIndex())
+	assert.Equal(t, leaderPeer.raft.log.lastIndex(), f3.raft.log.lastIndex())
+	assert.Equal(t, leaderPeer.raft.log.committed, f1.raft.log.committed)
+	assert.Equal(t, leaderPeer.raft.log.committed, f3.raft.log.committed)
+}
