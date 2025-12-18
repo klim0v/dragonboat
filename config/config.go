@@ -196,8 +196,8 @@ type Config struct {
 	// WaitReady specifies whether to wait for the node to transition
 	// from recovering to ready state before returning from StartReplica.
 	WaitReady bool
-	// ForcedLeaderReplicaID optionally forces the specified replica to start as
-	// the leader when bootstrapping a brand new shard (initial members + new node).
+	// ForcedLeaderReplicaID optionally forces this node to start its
+	// FSM with the specified replica ID as leader.
 	//
 	// This bypasses the standard Raft election process and is NOT part of the
 	// vanilla Raft protocol. All initial members must agree on the same ForcedLeaderReplicaID.
