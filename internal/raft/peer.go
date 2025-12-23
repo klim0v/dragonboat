@@ -73,6 +73,16 @@ func Launch(config config.Config,
 	if initial && newNode {
 		p.raft.becomeFollower(1, NoLeader)
 		bootstrap(p.raft, addresses)
+		if config.ForcedLeaderReplicaID != 0 {
+			if config.ReplicaID == config.ForcedLeaderReplicaID {
+				plog.Infof("forced leader is configured as this node, %d. FSM will transition to candidate, then leader", config.ForcedLeaderReplicaID)
+				p.raft.becomeCandidate()
+				p.raft.becomeLeader()
+			} else {
+				plog.Infof("forced leader is configured as another node, %d. FSM will transition to follower", config.ForcedLeaderReplicaID)
+				p.raft.becomeFollower(2, config.ForcedLeaderReplicaID)
+			}
+		}
 	}
 	return p
 }
@@ -392,6 +402,19 @@ func checkLaunchRequest(config config.Config,
 	}
 	if len(uniqueAddressList) != len(addresses) {
 		plog.Panicf("duplicated address found %v", addresses)
+	}
+	if initial && newNode && config.ForcedLeaderReplicaID != 0 {
+		found := false
+		for _, addr := range addresses {
+			if addr.ReplicaID == config.ForcedLeaderReplicaID {
+				found = true
+				break
+			}
+		}
+		if !found {
+			plog.Panicf("forced leader %d is not in initial member list %v",
+				config.ForcedLeaderReplicaID, addresses)
+		}
 	}
 	if initial && config.IsWitness {
 		plog.Panicf("witness can not be used as initial member")
