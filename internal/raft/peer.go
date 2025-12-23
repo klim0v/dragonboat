@@ -80,7 +80,7 @@ func Launch(config config.Config,
 				p.raft.becomeLeader()
 			} else {
 				plog.Infof("forced leader is configured as another node, %d. FSM will transition to follower", config.ForcedLeaderReplicaID)
-				p.raft.becomeFollower(1, config.ForcedLeaderReplicaID)
+				p.raft.becomeFollower(2, config.ForcedLeaderReplicaID)
 			}
 		}
 	}

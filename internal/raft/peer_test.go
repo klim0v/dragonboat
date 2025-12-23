@@ -911,7 +911,7 @@ func TestForcedLeader_FollowerState(t *testing.T) {
 
 	assert.Equal(t, follower, followerPeer.raft.state)
 	assert.Equal(t, uint64(2), followerPeer.raft.leaderID)
-	assert.Equal(t, uint64(1), followerPeer.raft.term)
+	assert.Equal(t, uint64(2), followerPeer.raft.term)
 	assert.Equal(t, uint64(3), followerPeer.raft.log.lastIndex())
 	assert.Equal(t, uint64(3), followerPeer.raft.log.committed)
 }
@@ -968,8 +968,8 @@ func TestForcedLeader_StateReplication(t *testing.T) {
 	f3 := Launch(f3Cfg, f3Storage, nil, addresses, true, true)
 
 	assert.Equal(t, uint64(2), leaderPeer.raft.term)
-	assert.Equal(t, uint64(1), f1.raft.term)
-	assert.Equal(t, uint64(1), f3.raft.term)
+	assert.Equal(t, uint64(2), f1.raft.term)
+	assert.Equal(t, uint64(2), f3.raft.term)
 
 	hb := pb.Message{
 		Type:   pb.Heartbeat,
@@ -1013,4 +1013,93 @@ func TestForcedLeader_StateReplication(t *testing.T) {
 	assert.Equal(t, leaderPeer.raft.log.lastIndex(), f3.raft.log.lastIndex())
 	assert.Equal(t, leaderPeer.raft.log.committed, f1.raft.log.committed)
 	assert.Equal(t, leaderPeer.raft.log.committed, f3.raft.log.committed)
+}
+
+func TestLateForcedLeaderStepDownToCandidate(t *testing.T) {
+	addresses := []PeerAddress{
+		{ReplicaID: 1, Address: "1"},
+		{ReplicaID: 2, Address: "2"},
+	}
+
+	f1Storage := NewTestLogDB()
+	f1Cfg := newTestConfig(1, 10, 1)
+	f1Cfg.ForcedLeaderReplicaID = 2
+	f1 := Launch(f1Cfg, f1Storage, nil, addresses, true, true)
+
+	assert.Equal(t, follower, f1.raft.state)
+	assert.Equal(t, uint64(2), f1.raft.term)
+	assert.Equal(t, uint64(2), f1.raft.leaderID)
+
+	f1.raft.becomeCandidate()
+	assert.Equal(t, candidate, f1.raft.state)
+	assert.Equal(t, uint64(3), f1.raft.term)
+	assert.Equal(t, NoLeader, f1.raft.leaderID)
+
+	leaderStorage := NewTestLogDB()
+	leaderCfg := newTestConfig(2, 10, 1)
+	leaderCfg.ForcedLeaderReplicaID = 2
+
+	forcedLeader := Launch(leaderCfg, leaderStorage, nil, addresses, true, true)
+	assert.Equal(t, leader, forcedLeader.raft.state)
+	assert.Equal(t, uint64(2), forcedLeader.raft.term)
+
+	lastTerm, err := f1.raft.log.lastTerm()
+	assert.NoError(t, err)
+	rv := pb.Message{
+		Type:     pb.RequestVote,
+		From:     1,
+		To:       2,
+		Term:     f1.raft.term,
+		LogIndex: f1.raft.log.lastIndex(),
+		LogTerm:  lastTerm,
+	}
+	ne(forcedLeader.Handle(rv), t)
+
+	assert.Equal(t, follower, forcedLeader.raft.state)
+	assert.Equal(t, uint64(3), forcedLeader.raft.term)
+	assert.Equal(t, NoLeader, forcedLeader.raft.leaderID)
+}
+
+func TestLateForcedLeaderStepDownToNewElectedLeader(t *testing.T) {
+	addresses := []PeerAddress{
+		{ReplicaID: 1, Address: "1"},
+		{ReplicaID: 2, Address: "2"},
+	}
+
+	f1Storage := NewTestLogDB()
+	f1Cfg := newTestConfig(1, 10, 1)
+	f1Cfg.ForcedLeaderReplicaID = 2
+	f1 := Launch(f1Cfg, f1Storage, nil, addresses, true, true)
+
+	assert.Equal(t, follower, f1.raft.state)
+	assert.Equal(t, uint64(2), f1.raft.term)
+	assert.Equal(t, uint64(2), f1.raft.leaderID)
+
+	f1.raft.becomeCandidate()
+	f1.raft.becomeLeader()
+	assert.Equal(t, leader, f1.raft.state)
+	assert.Equal(t, uint64(3), f1.raft.term)
+	assert.Equal(t, uint64(1), f1.raft.leaderID)
+
+	leaderStorage := NewTestLogDB()
+	leaderCfg := newTestConfig(2, 10, 1)
+	leaderCfg.ForcedLeaderReplicaID = 2
+	forcedLeader := Launch(leaderCfg, leaderStorage, nil, addresses, true, true)
+
+	assert.Equal(t, leader, forcedLeader.raft.state)
+	assert.Equal(t, uint64(2), forcedLeader.raft.term)
+	assert.Equal(t, uint64(2), forcedLeader.raft.leaderID)
+
+	hb := pb.Message{
+		Type:   pb.Heartbeat,
+		From:   1,
+		To:     2,
+		Term:   3,
+		Commit: f1.raft.log.committed,
+	}
+	ne(forcedLeader.Handle(hb), t)
+
+	assert.Equal(t, follower, forcedLeader.raft.state)
+	assert.Equal(t, uint64(3), forcedLeader.raft.term)
+	assert.Equal(t, uint64(1), forcedLeader.raft.leaderID)
 }
